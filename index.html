@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>學生獎懲委員會投票與統計系統</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS (Excel 讀寫引擎) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+  <style>
+    body {
+      font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      background-color: #f3f4f6;
+    }
+    .card-shadow {
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+    }
+    .radio-card:has(input:checked) {
+      border-color: #2563eb;
+      background-color: #eff6ff;
+    }
+    .sub-checkbox:has(input:checked) {
+      border-color: #4f46e5;
+      background-color: #eef2ff;
+      color: #3730a3;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body class="text-slate-800 pb-20">
+
+  <!-- 頂部導覽列 -->
+  <header class="bg-blue-900 text-white shadow-md sticky top-0 z-30">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5">
+        <span class="bg-blue-700 p-2 rounded-lg text-lg">⚖️</span>
+        <div>
+          <h1 class="text-lg sm:text-xl font-bold tracking-wide" id="header-title">學生獎懲委員會投票與統計系統</h1>
+          <p class="text-xs text-blue-200" id="header-subtitle">支援 Excel 匯入、委員線上審議投票與一鍵匯出統計報表</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="cursor-pointer bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-3.5 py-2 rounded-lg shadow transition flex items-center gap-1.5">
+          <span>📂 匯入 Excel</span>
+          <input type="file" id="excel-upload" accept=".xlsx,.xls,.csv" class="hidden" />
+        </label>
+        <button onclick="exportResultExcel()" class="bg-amber-500 hover:bg-amber-400 text-slate-900 text-sm font-bold px-3.5 py-2 rounded-lg shadow transition flex items-center gap-1.5">
+          <span>📥 匯出統計 Excel</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 系統訊息提示橫幅 -->
+  <div id="toast-banner" class="hidden max-w-5xl mx-auto px-4 mt-4">
+    <div id="toast-box" class="rounded-xl px-4 py-3 text-sm font-medium flex items-center justify-between shadow-sm">
+      <span id="toast-text"></span>
+      <button onclick="hideToast()" class="ml-4 font-bold opacity-70 hover:opacity-100">✕</button>
+    </div>
+  </div>
+
+  <!-- 主內容區 -->
+  <main class="max-w-5xl mx-auto px-4 mt-5">
+
+    <!-- 狀態資訊與分頁切換 -->
+    <div class="bg-white rounded-2xl p-4 mb-5 card-shadow border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-semibold text-slate-600">會議名稱：</span>
+          <input type="text" id="meeting-title-input" value="國中獎懲1151118"
+            onchange="updateMeetingTitle(this.value)"
+            class="border border-slate-300 rounded-lg px-2.5 py-1 text-sm font-bold text-blue-900 focus:outline-none focus:border-blue-500 w-44 sm:w-56" />
+        </div>
+
+        <div id="sheet-selector-wrap" class="hidden flex items-center gap-1.5">
+          <span class="text-sm font-semibold text-slate-600">工作表：</span>
+          <select id="sheet-selector" onchange="switchSheet(this.value)"
+            class="border border-slate-300 rounded-lg px-2.5 py-1 text-sm bg-slate-50 font-medium focus:outline-none focus:border-blue-500"></select>
+        </div>
+
+        <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-medium">
+          共 <strong id="case-count" class="text-blue-700">0</strong> 案 ｜ 已收 <strong id="ballot-count" class="text-emerald-700">0</strong> 份票單
+        </span>
+      </div>
+
+      <!-- 分頁切換按鈕 -->
+      <div class="flex bg-slate-100 p-1 rounded-xl">
+        <button id="tab-vote" onclick="switchTab('vote')"
+          class="px-4 py-1.5 rounded-lg text-sm font-bold bg-white text-blue-800 shadow-sm transition">
+          📝 委員投票單
+        </button>
+        <button id="tab-stats" onclick="switchTab('stats')"
+          class="px-4 py-1.5 rounded-lg text-sm font-bold text-slate-600 hover:text-slate-900 transition">
+          📊 即時統計與明細 (<span id="tab-ballot-badge">0</span>)
+        </button>
+      </div>
+    </div>
+
+    <!-- ==================== 分頁 1：委員投票單 ==================== -->
+    <section id="view-vote">
+      <!-- 委員基本資料卡片 -->
+      <div class="bg-white rounded-2xl p-5 sm:p-6 mb-5 card-shadow border-t-8 border-blue-800">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900" id="form-display-title">國中獎懲1151118</h2>
+            <p class="text-xs text-red-600 mt-1">* 表示必填問題（修改既有委員票單時，送出後將直接覆蓋更新該委員紀錄）</p>
+          </div>
+          <span id="editing-badge" class="hidden bg-amber-100 text-amber-800 text-xs font-bold px-3 py-1 rounded-full border border-amber-300">
+            ✏️ 正在編輯已送出之票單
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5 pt-3 border-t border-slate-100">
+          <!-- 委員身分 -->
+          <div>
+            <label class="block text-sm font-bold text-slate-800 mb-2">
+              委員身分 <span class="text-red-500">*</span>
+            </label>
+            <div class="grid grid-cols-2 gap-2" id="role-group">
+              <label class="radio-card cursor-pointer border border-slate-300 rounded-xl px-3 py-2.5 flex items-center gap-2 text-sm transition">
+                <input type="radio" name="voterRole" value="行政代表" class="accent-blue-600 w-4 h-4" />
+                <span>行政代表</span>
+              </label>
+              <label class="radio-card cursor-pointer border border-slate-300 rounded-xl px-3 py-2.5 flex items-center gap-2 text-sm transition">
+                <input type="radio" name="voterRole" value="教師代表" class="accent-blue-600 w-4 h-4" />
+                <span>教師代表</span>
+              </label>
+              <label class="radio-card cursor-pointer border border-slate-300 rounded-xl px-3 py-2.5 flex items-center gap-2 text-sm transition">
+                <input type="radio" name="voterRole" value="家長代表" class="accent-blue-600 w-4 h-4" />
+                <span>家長代表</span>
+              </label>
+              <label class="radio-card cursor-pointer border border-slate-300 rounded-xl px-3 py-2.5 flex items-center gap-2 text-sm transition">
+                <input type="radio" name="voterRole" value="學生代表" class="accent-blue-600 w-4 h-4" />
+                <span>學生代表</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 委員姓名 -->
+          <div>
+            <label for="voter-name" class="block text-sm font-bold text-slate-800 mb-2">
+              請輸入您的姓名： <span class="text-red-500">*</span>
+            </label>
+            <input type="text" id="voter-name" placeholder="請輸入委員姓名"
+              class="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100" />
+
+            <!-- 快捷批量操作 -->
+            <div class="mt-3 flex flex-wrap gap-2">
+              <button type="button" onclick="batchSelect('original')"
+                class="text-xs bg-blue-50 hover:bg-blue-100 text-blue-800 font-semibold px-3 py-1.5 rounded-lg border border-blue-200 transition">
+                ⚡ 一鍵全選：原懲處建議
+              </button>
+              <button type="button" onclick="batchSelect('committee')"
+                class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-semibold px-3 py-1.5 rounded-lg border border-indigo-200 transition">
+                ⚡ 一鍵全選：依獎懲會建議
+              </button>
+              <button type="button" onclick="clearCurrentForm()"
+                class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3 py-1.5 rounded-lg transition">
+                🔄 清空重填
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 案件投票清單容器 -->
+      <div id="cases-container" class="space-y-4"></div>
+
+      <!-- 底部送出列 -->
+      <div class="mt-6 bg-white rounded-2xl p-5 card-shadow border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+        <div class="text-sm text-slate-600">
+          已完成填選：<strong id="answered-progress" class="text-blue-700 text-base">0 / 0</strong> 案
+        </div>
+        <div class="flex items-center gap-3">
+          <button type="button" id="cancel-edit-btn" onclick="cancelEdit()" class="hidden px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            取消編輯
+          </button>
+          <button type="button" onclick="submitBallot()"
+            class="bg-blue-700 hover:bg-blue-600 text-white font-bold px-7 py-3 rounded-xl shadow-md transition text-base">
+            ✅ 送出本委員投票單
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 分頁 2：即時統計與明細 ==================== -->
+    <section id="view-stats" class="hidden space-y-6">
+      <!-- 已投票委員名單管理 -->
+      <div class="bg-white rounded-2xl p-5 card-shadow border border-slate-200">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h3 class="text-base font-bold text-slate-900">👥 已完成投票委員名單（點擊可修改或刪除該委員票單）</h3>
+          <button onclick="resetAllBallots()" class="text-xs text-red-600 hover:text-red-800 font-semibold px-2.5 py-1 rounded border border-red-200 hover:bg-red-50">
+            🗑️ 清空所有投票紀錄
+          </button>
+        </div>
+        <div id="voters-list" class="flex flex-wrap gap-2">
+          <p class="text-sm text-slate-400">目前尚無委員送出票單。</p>
+        </div>
+      </div>
+
+      <!-- 各案統計總表 -->
+      <div class="bg-white rounded-2xl p-5 card-shadow border border-slate-200 overflow-x-auto">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <h3 class="text-base font-bold text-slate-900">📊 各案投票結果即時統計表</h3>
+          <button onclick="exportResultExcel()" class="bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-bold px-3.5 py-2 rounded-lg shadow-sm transition">
+            📥 匯出完整統計 Excel (.xlsx)
+          </button>
+        </div>
+        <table class="w-full text-left border-collapse text-sm min-w-[920px]">
+          <thead>
+            <tr class="bg-slate-800 text-white text-xs">
+              <th class="p-2.5 border border-slate-700 w-12 text-center">編號</th>
+              <th class="p-2.5 border border-slate-700 w-24">班級/座號</th>
+              <th class="p-2.5 border border-slate-700 w-20">姓名</th>
+              <th class="p-2.5 border border-slate-700 w-32">原懲處建議</th>
+              <th class="p-2.5 border border-slate-700 w-28 text-center bg-blue-900">同意原建議</th>
+              <th class="p-2.5 border border-slate-700 w-28 text-center bg-indigo-900">依獎懲會建議</th>
+              <th class="p-2.5 border border-slate-700">「依獎懲會建議」具體處分統計</th>
+              <th class="p-2.5 border border-slate-700 w-44">其他建議彙整</th>
+              <th class="p-2.5 border border-slate-700 w-32 text-center bg-emerald-900">多數決議</th>
+            </tr>
+          </thead>
+          <tbody id="stats-tbody" class="divide-y divide-slate-200"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // ==================== 常數與預設範例資料 ====================
+    const SUB_OPTIONS = [
+      "警告乙次",
+      "警告2次",
+      "小過乙次",
+      "小過2次",
+      "大過乙次",
+      "大過2次",
+      "大過3次"
+    ];
+
+    const DEFAULT_CASES = [
+      { no: "1", cls: "七勇", seat: "31", name: "陳廷安", reason: "陳生於11/3日健教課時毆打林承熹同學，造成林生右手臂紅腫", rule: "10-7", ruleContent: "有毆打同學之事實。", suggestion: "小過乙支" },
+      { no: "2", cls: "七勇", seat: "31", name: "陳廷安", reason: "陳生於連絡簿上謊報成績", rule: "10-29", ruleContent: "經查有欺騙之情形。", suggestion: "小過乙支" },
+      { no: "3", cls: "七誠", seat: "44", name: "羅盛熙", reason: "11/4社團課時在同學面前公開辱駡英文科朱珮馨老師「賤貨」。", rule: "10-23", ruleContent: "有言語侵犯他人情節確定。", suggestion: "小過乙支" },
+      { no: "4", cls: "八仁", seat: "25", name: "高翊睿", reason: "10/29童軍課上課時該生未遵守課堂烤棉花糖操作，逕自撕紙打算要在鐵盤上燒被老師發現", rule: "10-21", ruleContent: "危及公共安全者。", suggestion: "大過乙支" },
+      { no: "5", cls: "八仁", seat: "30", name: "陳以辰", reason: "10/29童軍課上課時該生未遵守課堂烤棉花糖操作，逕自與同組同學在鐵盤上燒紙被老師發現", rule: "10-21", ruleContent: "危及公共安全者。", suggestion: "大過乙支" },
+      { no: "6", cls: "八仁", seat: "43", name: "羅皓宇", reason: "10/29童軍課上課時該生未遵守課堂烤棉花糖操作，逕自撕紙與同組同學在鐵盤上燒被老師發現", rule: "10-21", ruleContent: "危及公共安全者。", suggestion: "大過乙支" },
+      { no: "7", cls: "八平", seat: "32", name: "陳瑾宇", reason: "10/30該生連兩天搭乘放學校車時未經同意拍照並將同學照片註記後上傳至個人IG", rule: "10-23", ruleContent: "以言語、文字或於網路各式平台利用文字、影片、圖片侵犯他人名譽或權益時，導致他人身心受傷輕微者。", suggestion: "小過乙支" },
+      { no: "8", cls: "八平", seat: "41", name: "戴允淏", reason: "10/20該生晚練時段複習英文文法時比手畫腳", rule: "10-14", ruleContent: "不遵守校內行政部門核定之團體規範及學習紀律，進而影響他人學習。", suggestion: "小過乙支" },
+      { no: "9", cls: "九勇", seat: "38", name: "劉祖銓", reason: "10/5劉生在校車上撿到林生的皮夾，劉生拾獲後12天未歸還，10/17劉生去補習班上課時，忘了帶錢包，拿了林生的悠遊卡消費，10/19日放學時告知林生，10/20日將皮包還給林生", rule: "11-10", ruleContent: "竊盜行為，情節嚴重者；或竊盜行為，情節輕微者，經小過處分後仍未經改善者。", suggestion: "大過乙支" },
+      { no: "10", cls: "九正", seat: "39", name: "陳名澤", reason: "11/11日晚輔第二節快下課時，陳生從孝芬樓4樓拍完畢業照片後，陳生回教室下樓速度過快，眼見要撞上前面的同學，伸手推前面同學，造成同學從樓梯跌落導致右腳扭傷及骨折。", rule: "10-26", ruleContent: "雖無惡意，惟因個人行為恐造成他人傷害，情節較輕者（如：抽椅子、三人跳挑戰…等易造成他人受傷之玩笑或行為）", suggestion: "小過乙支" },
+      { no: "11", cls: "七仁", seat: "26", name: "周宥辰", reason: "10/19午餐時間周生爬廁所隔牆偷窺曹同學上廁所", rule: "10-28", ruleContent: "有攀爬廁所隔間之行為，侵犯他人如廁隱私者。", suggestion: "小過乙支" },
+      { no: "12", cls: "七誠", seat: "39", name: "葉祐宇", reason: "葉生用紙條寫七誠同學之個人小考成績及負面批評等八項，拿給校車上其他同學傳閱。", rule: "10-23", ruleContent: "以言語侵犯他人，導致他人身心受傷輕微者。", suggestion: "小過乙支" },
+      { no: "13", cls: "七齊", seat: "38", name: "葉宸愷", reason: "葉生10/20英文小考因為沒有考好，不開心就用力拍打桌面。", rule: "10-6", ruleContent: "有擾亂上課及影響他人學習之情形。", suggestion: "小過乙支" },
+      { no: "14", cls: "七齊", seat: "38", name: "葉宸愷", reason: "葉生10/30第七節課謊稱要去練拔河擅自離開教室。", rule: "10-16", ruleContent: "葉生確有上課無故或蓄意未到指定地點上課之行為。", suggestion: "小過乙支" },
+      { no: "15", cls: "七齊", seat: "38", name: "葉宸愷", reason: "葉生於11/3上課時間未報備擅自行離開教室。", rule: "10-16", ruleContent: "葉生確有上課無故或蓄意未到指定地點上課之行為。", suggestion: "小過乙支" },
+      { no: "16", cls: "七齊", seat: "38", name: "葉宸愷", reason: "葉生於11月3日上課時間不配合課任老師的要求交換改考卷，其行為不當予以懲處。", rule: "10-15", ruleContent: "葉生確有上課不服從老師指導之行為。", suggestion: "小過乙支" },
+      { no: "17", cls: "七齊", seat: "38", name: "葉宸愷", reason: "葉生於11月6日在上學的校車上拍打學長的頭，其行為不當予以懲處。", rule: "10-26", ruleContent: "其個人行為恐造成他人之傷害。", suggestion: "小過乙支" },
+      { no: "18", cls: "七齊", seat: "38", name: "葉宸愷", reason: "葉生於11/30下課時間對三位同學辱罵「智能障礙」。", rule: "10-23", ruleContent: "葉生確有以言語侵犯他人名譽之行為。", suggestion: "小過乙支" },
+      { no: "19", cls: "八信", seat: "20", name: "李翊玄", reason: "10/27李生下課與同學去廁所換衣服因等太久就拉開門縫去看同學", rule: "10-28", ruleContent: "利用攀爬或其他方式窺探廁所隔間，侵犯他人如廁隱私者", suggestion: "小過乙支" },
+      { no: "20", cls: "八信", seat: "38", name: "賴奕睿", reason: "10/27賴生下課與同學去廁所換衣服，因李生等太久就拉開門縫去看該生，該賴心生不悅出來後出手抓傷李生脖子", rule: "10-24", ruleContent: "故意或過失傷害他人身心或造成健康疑慮者或發生肢體衝突有推、撞、打、拍……等動作，未成傷者。", suggestion: "小過乙支" },
+      { no: "21", cls: "八信", seat: "6", name: "張羽樂", reason: "11/10該生在歷史小考時向同學問答案，考試時雙方比手畫腳", rule: "10-9", ruleContent: "平時考違反考場各項規範、攜帶非應試需求之各項電子產品入試者。", suggestion: "小過乙支" },
+      { no: "22", cls: "八信", seat: "38", name: "賴奕睿", reason: "11/10該生在歷史小考時向同學問答案，考試時雙方比手畫腳", rule: "10-9", ruleContent: "平時考違反考場各項規範、攜帶非應試需求之各項電子產品入試者。", suggestion: "小過乙支" },
+      { no: "23", cls: "八忠", seat: "2", name: "呂襲恩", reason: "10/30該生於英文課小考時使用小抄應答", rule: "10-9", ruleContent: "平時考違反考場各項規範、攜帶非應試需求之各項電子產品入試者。", suggestion: "小過乙支" },
+      { no: "24", cls: "九信", seat: "17", name: "林泳佑", reason: "10/21上國文課時，林生因手機響起，拿起手機解鎖後，看螢幕是早上搭校車時玩遊戲畫面，便拿起來繼續玩，老師發現後，林生辯稱沒有在玩手機，導師多方查證後，林生才坦承有在玩手機遊戲。", rule: "10-18、11-10", ruleContent: "10-18違反學校行動載具使用原則，手機於校內未關機者。\n11-10欺騙師長，情節輕微者", suggestion: "小過乙支" },
+      { no: "25", cls: "九仁", seat: "8", name: "鄭迦諦", reason: "10/19中午，鄭生和翟生相約至道公樓4樓梯間擁抱親嘴，被經過師長發現，師長詢問是哪班的學生，其中翟生謊稱是九愛的學生，鄭生則誠實回答。", rule: "10-19", ruleContent: "針對異性互動中，有下列不當肢體接觸者行為，予以懲誡警惕：\n（一）親吻、擁抱", suggestion: "小過乙支" },
+      { no: "26", cls: "九仁", seat: "42", name: "翟叡", reason: "10/19中午，鄭生和翟生相約至道公樓4樓梯間擁抱親嘴，被經過師長發現，師長詢問是哪班的學生，其中翟生謊稱是九愛的學生，鄭生則誠實回答。", rule: "10-19、11-17", ruleContent: "10-19針對異性互動中，有下列不當肢體接觸者行為，予以懲誡警惕：\n（一）親吻、擁抱。\n11-17欺騙師長、無故不服從師長，情節輕微者。", suggestion: "小過乙支、大過乙支" }
+    ];
+
+    // ==================== 應用程式狀態 ====================
+    const STORAGE_KEY = "discipline_vote_system_v3";
+    let state = {
+      meetingTitle: "國中獎懲1151118",
+      cases: [...DEFAULT_CASES],
+      ballots: [], // [{ id, role, name, timestamp, votes: { [index]: { choiceType: 'original'|'committee', subChoices: [], note: '' } } }]
+      editingBallotId: null
+    };
+    let workbookCache = null;
+
+    // ==================== 初始化 ====================
+    window.addEventListener("DOMContentLoaded", () => {
+      loadFromStorage();
+      document.getElementById("excel-upload").addEventListener("change", handleExcelUpload);
+      renderAll();
+    });
+
+    function saveToStorage() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          meetingTitle: state.meetingTitle,
+          cases: state.cases,
+          ballots: state.ballots
+        }));
+      } catch (e) {
+        console.warn("無法寫入本機暫存:", e);
+      }
+    }
+
+    function loadFromStorage() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.meetingTitle) state.meetingTitle = parsed.meetingTitle;
+          if (Array.isArray(parsed.cases) && parsed.cases.length > 0) state.cases = parsed.cases;
+          if (Array.isArray(parsed.ballots)) state.ballots = parsed.ballots;
+        }
+      } catch (e) {
+        console.warn("讀取本機暫存失敗:", e);
+      }
+    }
+
+    // ==================== 提示橫幅 ====================
+    function showToast(msg, type = "success") {
+      const banner = document.getElementById("toast-banner");
+      const box = document.getElementById("toast-box");
+      const text = document.getElementById("toast-text");
+      text.textContent = msg;
+
+      box.className = "rounded-xl px-4 py-3 text-sm font-medium flex items-center justify-between shadow-sm ";
+      if (type === "error") {
+        box.className += "bg-red-100 text-red-900 border border-red-300";
+      } else if (type === "warning") {
+        box.className += "bg-amber-100 text-amber-900 border border-amber-300";
+      } else {
+        box.className += "bg-emerald-100 text-emerald-900 border border-emerald-300";
+      }
+      banner.classList.remove("hidden");
+    }
+
+    function hideToast() {
+      document.getElementById("toast-banner").classList.add("hidden");
+    }
+
+    // ==================== Excel 匯入與多層表頭解析 ====================
+    function handleExcelUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      if (typeof XLSX === "undefined") {
+        showToast("Excel 解析元件尚未載入完成，請確認網路連線後重新整理頁面。", "error");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function (evt) {
+        try {
+          const data = new Uint8Array(evt.target.result);
+          const wb = XLSX.read(data, { type: "array" });
+          workbookCache = wb;
+
+          const selectorWrap = document.getElementById("sheet-selector-wrap");
+          const selector = document.getElementById("sheet-selector");
+          selector.innerHTML = "";
+
+          wb.SheetNames.forEach((name) => {
+            const opt = document.createElement("option");
+            opt.value = name;
+            opt.textContent = name;
+            selector.appendChild(opt);
+          });
+
+          // 若存在「工作表2」且有資料則優先選取，否則選第一張工作表
+          const defaultSheet = wb.SheetNames.includes("工作表2") ? "工作表2" : wb.SheetNames[0];
+          selector.value = defaultSheet;
+          if (wb.SheetNames.length > 1) {
+            selectorWrap.classList.remove("hidden");
+          } else {
+            selectorWrap.classList.add("hidden");
+          }
+
+          // 從檔名擷取預設會議名稱（去除副檔名）
+          const cleanFileName = file.name.replace(/\.[^/.]+$/, "");
+          state.meetingTitle = cleanFileName;
+
+          parseSheetData(wb.Sheets[defaultSheet], defaultSheet);
+        } catch (err) {
+          console.error(err);
+          showToast("匯入失敗：無法讀取此 Excel 檔案，請確認格式是否正確。", "error");
+        }
+      };
+      reader.readAsArrayBuffer(file);
+      e.target.value = "";
+    }
+
+    function switchSheet(sheetName) {
+      if (!workbookCache || !workbookCache.Sheets[sheetName]) return;
+      parseSheetData(workbookCache.Sheets[sheetName], sheetName);
+    }
+
+    function parseSheetData(sheet, sheetName) {
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+      if (!rows || rows.length === 0) {
+        showToast(`工作表「${sheetName}」是空的，沒有可匯入的資料。`, "error");
+        return;
+      }
+
+      // 掃描前 15 列尋找真正包含「班級」「姓名」的表頭列
+      let headerRowIdx = -1;
+      let colMap = { no: -1, cls: -1, seat: -1, name: -1, reason: -1, rule: -1, ruleContent: -1, suggestion: -1 };
+
+      for (let r = 0; r < Math.min(rows.length, 15); r++) {
+        const row = rows[r].map(cell => String(cell).replace(/\s+/g, "").trim());
+        const clsIdx = row.findIndex(h => h.includes("班級"));
+        const nameIdx = row.findIndex(h => h.includes("姓名"));
+        if (clsIdx !== -1 && nameIdx !== -1) {
+          headerRowIdx = r;
+          colMap.no = row.findIndex(h => h.includes("編號") || h === "序號");
+          colMap.cls = clsIdx;
+          colMap.seat = row.findIndex(h => h.includes("座號"));
+          colMap.name = nameIdx;
+          colMap.reason = row.findIndex(h => h.includes("懲處事由") || h.includes("事由"));
+          colMap.rule = row.findIndex(h => h.includes("獎懲條例") || h.includes("條例"));
+          colMap.ruleContent = row.findIndex(h => h.includes("條例內容") || h.includes("內容"));
+          colMap.suggestion = row.findIndex(h => h.includes("懲處建議") || h.includes("建議"));
+          break;
+        }
+      }
+
+      if (headerRowIdx === -1) {
+        showToast("找不到「班級」與「姓名」欄位表頭，請確認 Excel 欄位名稱。", "error");
+        return;
+      }
+
+      const parsedCases = [];
+      let lastReason = "";
+
+      for (let r = headerRowIdx + 1; r < rows.length; r++) {
+        const rawRow = rows[r];
+        const clsVal = colMap.cls !== -1 ? String(rawRow[colMap.cls] ?? "").trim() : "";
+        const nameVal = colMap.name !== -1 ? String(rawRow[colMap.name] ?? "").trim() : "";
+
+        // 略過子表頭（如「同意 / 依獎懲會建議」）或底部空列
+        if (!clsVal || !nameVal || clsVal === "班級" || nameVal === "姓名") continue;
+
+        const noVal = colMap.no !== -1 && String(rawRow[colMap.no] ?? "").trim() !== ""
+          ? String(rawRow[colMap.no]).trim()
+          : String(parsedCases.length + 1);
+
+        const seatVal = colMap.seat !== -1 ? String(rawRow[colMap.seat] ?? "").trim() : "";
+
+        // 合併儲存格事由向下繼承
+        let reasonVal = colMap.reason !== -1 ? String(rawRow[colMap.reason] ?? "").trim() : "";
+        if (reasonVal) {
+          lastReason = reasonVal;
+        } else {
+          reasonVal = lastReason;
+        }
+
+        const ruleVal = colMap.rule !== -1
+          ? String(rawRow[colMap.rule] ?? "").trim().replace(/\r?\n+/g, "、")
+          : "";
+
+        const ruleContentVal = colMap.ruleContent !== -1
+          ? String(rawRow[colMap.ruleContent] ?? "").trim()
+          : "";
+
+        // 同一儲存格內的多行懲處建議（如大過、小過）合併為單一選項
+        let suggestionVal = colMap.suggestion !== -1
+          ? String(rawRow[colMap.suggestion] ?? "")
+              .split(/\r?\n/)
+              .map(s => s.trim())
+              .filter(Boolean)
+              .join("、")
+          : "";
+        if (!suggestionVal) suggestionVal = "依原懲處建議";
+
+        parsedCases.push({
+          no: noVal,
+          cls: clsVal,
+          seat: seatVal,
+          name: nameVal,
+          reason: reasonVal,
+          rule: ruleVal,
+          ruleContent: ruleContentVal,
+          suggestion: suggestionVal
+        });
+      }
+
+      if (parsedCases.length === 0) {
+        showToast("已找到表頭，但下方沒有有效的學生案件資料列。", "error");
+        return;
+      }
+
+      state.cases = parsedCases;
+      state.ballots = [];
+      state.editingBallotId = null;
+      saveToStorage();
+      switchTab("vote");
+      renderAll();
+      showToast(`✅ 成功從「${sheetName}」匯入 ${parsedCases.length} 筆案件！已自動產生投票單。`, "success");
+    }
+
+    // ==================== 畫面渲染 ====================
+    function updateMeetingTitle(val) {
+      state.meetingTitle = val.trim() || "學生獎懲委員會投票表";
+      document.getElementById("form-display-title").textContent = state.meetingTitle;
+      saveToStorage();
+    }
+
+    function switchTab(tab) {
+      const voteView = document.getElementById("view-vote");
+      const statsView = document.getElementById("view-stats");
+      const tabVote = document.getElementById("tab-vote");
+      const tabStats = document.getElementById("tab-stats");
+
+      if (tab === "vote") {
+        voteView.classList.remove("hidden");
+        statsView.classList.add("hidden");
+        tabVote.className = "px-4 py-1.5 rounded-lg text-sm font-bold bg-white text-blue-800 shadow-sm transition";
+        tabStats.className = "px-4 py-1.5 rounded-lg text-sm font-bold text-slate-600 hover:text-slate-900 transition";
+      } else {
+        voteView.classList.add("hidden");
+        statsView.classList.remove("hidden");
+        tabStats.className = "px-4 py-1.5 rounded-lg text-sm font-bold bg-white text-blue-800 shadow-sm transition";
+        tabVote.className = "px-4 py-1.5 rounded-lg text-sm font-bold text-slate-600 hover:text-slate-900 transition";
+        renderStats();
+      }
+    }
+
+    function renderAll() {
+      document.getElementById("meeting-title-input").value = state.meetingTitle;
+      document.getElementById("form-display-title").textContent = state.meetingTitle;
+      document.getElementById("case-count").textContent = state.cases.length;
+      document.getElementById("ballot-count").textContent = state.ballots.length;
+      document.getElementById("tab-ballot-badge").textContent = state.ballots.length;
+
+      renderCasesForm();
+      renderStats();
+      updateProgress();
+    }
+
+    function renderCasesForm() {
+      const container = document.getElementById("cases-container");
+      container.innerHTML = "";
+
+      state.cases.forEach((c, idx) => {
+        const card = document.createElement("div");
+        card.className = "bg-white rounded-2xl p-5 card-shadow border border-slate-200 transition hover:border-blue-300";
+        card.id = `case-card-${idx}`;
+
+        const subCheckboxesHtml = SUB_OPTIONS.map((opt) => `
+          <label class="sub-checkbox cursor-pointer border border-slate-300 bg-white rounded-lg px-3 py-1.5 text-xs sm:text-sm flex items-center gap-1.5 transition select-none">
+            <input type="checkbox" name="sub_${idx}" value="${opt}" onchange="handleSubCheckboxChange(${idx})" class="accent-indigo-600 w-4 h-4" />
+            <span>${opt}</span>
+          </label>
+        `).join("");
+
+        card.innerHTML = `
+          <div class="flex flex-wrap items-center gap-2 mb-3 pb-2.5 border-b border-slate-100">
+            <span class="bg-blue-900 text-white text-xs font-bold px-2.5 py-1 rounded-md">編號 ${escapeHtml(c.no)}</span>
+            <span class="bg-slate-100 text-slate-800 text-sm font-bold px-2.5 py-0.5 rounded">${escapeHtml(c.cls)}</span>
+            ${c.seat ? `<span class="bg-slate-100 text-slate-700 text-sm font-semibold px-2.5 py-0.5 rounded">${escapeHtml(c.seat)} 號</span>` : ""}
+            <span class="text-base font-extrabold text-slate-900">${escapeHtml(c.name)}</span>
+            <span class="text-red-500 font-bold ml-auto text-sm">*</span>
+          </div>
+
+          <div class="space-y-2.5 text-sm mb-4">
+            <div class="bg-slate-50 rounded-xl p-3 border border-slate-200/80">
+              <div class="text-xs font-bold text-slate-500 mb-1">懲處事由</div>
+              <div class="text-slate-800 leading-relaxed whitespace-pre-line">${escapeHtml(c.reason)}</div>
+            </div>
+
+            <div class="bg-amber-50/60 rounded-xl p-3 border border-amber-200/70">
+              <div class="text-xs font-bold text-amber-800 mb-1">獎懲條例：${escapeHtml(c.rule || "未註明")}</div>
+              <div class="text-slate-700 text-xs sm:text-sm leading-relaxed whitespace-pre-line">${escapeHtml(c.ruleContent || "—")}</div>
+            </div>
+          </div>
+
+          <!-- 投票選項區 -->
+          <div class="space-y-3">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <!-- 選項 1：原懲處建議（合併儲存格多行建議為同一選項） -->
+              <label class="radio-card cursor-pointer border-2 border-slate-200 rounded-xl p-3 flex items-center gap-3 transition">
+                <input type="radio" name="choice_${idx}" value="original" onchange="handleMainChoiceChange(${idx}, 'original')" class="accent-blue-600 w-4 h-4 shrink-0" />
+                <div>
+                  <div class="font-bold text-slate-900 text-sm sm:text-base">${escapeHtml(c.suggestion)}</div>
+                  <div class="text-xs text-slate-500">同意原簽請懲處建議</div>
+                </div>
+              </label>
+
+              <!-- 選項 2：依獎懲會建議 -->
+              <label class="radio-card cursor-pointer border-2 border-slate-200 rounded-xl p-3 flex items-center gap-3 transition">
+                <input type="radio" name="choice_${idx}" value="committee" onchange="handleMainChoiceChange(${idx}, 'committee')" class="accent-indigo-600 w-4 h-4 shrink-0" />
+                <div>
+                  <div class="font-bold text-indigo-900 text-sm sm:text-base">依獎懲會建議</div>
+                  <div class="text-xs text-indigo-600">可於下方複選具體處分度數</div>
+                </div>
+              </label>
+            </div>
+
+            <!-- 獎懲會建議具體處分複選區 -->
+            <div id="committee-panel-${idx}" class="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-indigo-900">📌 獎懲會建議具體處分（可複選，點選自動連動「依獎懲會建議」）：</span>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                ${subCheckboxesHtml}
+              </div>
+              <div id="note-wrap-${idx}" class="hidden pt-1">
+                <input type="text" id="note_${idx}" placeholder="其他建議或補充說明（選填）"
+                  class="w-full bg-white border border-indigo-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-600" />
+              </div>
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // ==================== 互動邏輯 ====================
+    function handleMainChoiceChange(idx, type) {
+      const noteWrap = document.getElementById(`note-wrap-${idx}`);
+      if (type === "committee") {
+        noteWrap.classList.remove("hidden");
+      } else {
+        // 選回原懲處建議時，清除複選與收合補充欄位
+        document.querySelectorAll(`input[name="sub_${idx}"]`).forEach(cb => cb.checked = false);
+        const noteInput = document.getElementById(`note_${idx}`);
+        if (noteInput) noteInput.value = "";
+        noteWrap.classList.add("hidden");
+      }
+      updateProgress();
+    }
+
+    function handleSubCheckboxChange(idx) {
+      const checkedSubs = Array.from(document.querySelectorAll(`input[name="sub_${idx}"]:checked`));
+      const committeeRadio = document.querySelector(`input[name="choice_${idx}"][value="committee"]`);
+      const noteWrap = document.getElementById(`note-wrap-${idx}`);
+
+      if (checkedSubs.length > 0 && committeeRadio) {
+        committeeRadio.checked = true;
+        noteWrap.classList.remove("hidden");
+      }
+      updateProgress();
+    }
+
+    function batchSelect(type) {
+      state.cases.forEach((_, idx) => {
+        const radio = document.querySelector(`input[name="choice_${idx}"][value="${type}"]`);
+        if (radio) {
+          radio.checked = true;
+          handleMainChoiceChange(idx, type);
+        }
+      });
+      showToast(type === "original" ? "已為您一鍵全選「原懲處建議」" : "已為您一鍵全選「依獎懲會建議」", "success");
+    }
+
+    function clearCurrentForm() {
+      document.querySelectorAll('input[name="voterRole"]').forEach(r => r.checked = false);
+      document.getElementById("voter-name").value = "";
+      state.cases.forEach((_, idx) => {
+        document.querySelectorAll(`input[name="choice_${idx}"]`).forEach(r => r.checked = false);
+        document.querySelectorAll(`input[name="sub_${idx}"]`).forEach(cb => cb.checked = false);
+        const note = document.getElementById(`note_${idx}`);
+        if (note) note.value = "";
+        const noteWrap = document.getElementById(`note-wrap-${idx}`);
+        if (noteWrap) noteWrap.classList.add("hidden");
+      });
+      updateProgress();
+    }
+
+    function updateProgress() {
+      let answered = 0;
+      state.cases.forEach((_, idx) => {
+        if (document.querySelector(`input[name="choice_${idx}"]:checked`)) {
+          answered++;
+        }
+      });
+      document.getElementById("answered-progress").textContent = `${answered} / ${state.cases.length}`;
+    }
+
+    // ==================== 送出、編輯、刪除票單 ====================
+    function submitBallot() {
+      const roleEl = document.querySelector('input[name="voterRole"]:checked');
+      const nameVal = document.getElementById("voter-name").value.trim();
+
+      if (!roleEl) {
+        showToast("請先選擇「委員身分」！", "error");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      if (!nameVal) {
+        showToast("請輸入「委員姓名」！", "error");
+        document.getElementById("voter-name").focus();
+        return;
+      }
+
+      const votes = {};
+      for (let idx = 0; idx < state.cases.length; idx++) {
+        const choiceEl = document.querySelector(`input[name="choice_${idx}"]:checked`);
+        if (!choiceEl) {
+          showToast(`尚有「編號 ${state.cases[idx].no}（${state.cases[idx].name}）」尚未選擇決議！`, "error");
+          const card = document.getElementById(`case-card-${idx}`);
+          if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+        const subChoices = Array.from(document.querySelectorAll(`input[name="sub_${idx}"]:checked`)).map(cb => cb.value);
+        const note = (document.getElementById(`note_${idx}`)?.value || "").trim();
+
+        votes[idx] = {
+          choiceType: choiceEl.value,
+          subChoices,
+          note
+        };
+      }
+
+      const nowStr = new Date().toLocaleString("zh-TW", { hour12: false });
+
+      if (state.editingBallotId) {
+        const targetIdx = state.ballots.findIndex(b => b.id === state.editingBallotId);
+        if (targetIdx !== -1) {
+          state.ballots[targetIdx] = {
+            ...state.ballots[targetIdx],
+            role: roleEl.value,
+            name: nameVal,
+            timestamp: nowStr + " (已修訂)",
+            votes
+          };
+        }
+        state.editingBallotId = null;
+        document.getElementById("editing-badge").classList.add("hidden");
+        document.getElementById("cancel-edit-btn").classList.add("hidden");
+        showToast(`✅ 已成功更新委員「${nameVal}（${roleEl.value}）」的投票紀錄！`, "success");
+      } else {
+        state.ballots.push({
+          id: "ballot_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+          role: roleEl.value,
+          name: nameVal,
+          timestamp: nowStr,
+          votes
+        });
+        showToast(`✅ 已成功記錄委員「${nameVal}（${roleEl.value}）」的投票！表單已清空，可繼續下一位委員投票。`, "success");
+      }
+
+      saveToStorage();
+      clearCurrentForm();
+      renderAll();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function editBallot(id) {
+      const ballot = state.ballots.find(b => b.id === id);
+      if (!ballot) return;
+
+      state.editingBallotId = id;
+      switchTab("vote");
+      clearCurrentForm();
+
+      const roleRadio = document.querySelector(`input[name="voterRole"][value="${ballot.role}"]`);
+      if (roleRadio) roleRadio.checked = true;
+      document.getElementById("voter-name").value = ballot.name;
+
+      state.cases.forEach((_, idx) => {
+        const v = ballot.votes[idx];
+        if (!v) return;
+        const radio = document.querySelector(`input[name="choice_${idx}"][value="${v.choiceType}"]`);
+        if (radio) {
+          radio.checked = true;
+          handleMainChoiceChange(idx, v.choiceType);
+        }
+        if (Array.isArray(v.subChoices)) {
+          v.subChoices.forEach(sub => {
+            const cb = document.querySelector(`input[name="sub_${idx}"][value="${sub}"]`);
+            if (cb) cb.checked = true;
+          });
+        }
+        if (v.note) {
+          const noteInput = document.getElementById(`note_${idx}`);
+          if (noteInput) noteInput.value = v.note;
+        }
+      });
+
+      updateProgress();
+      document.getElementById("editing-badge").classList.remove("hidden");
+      document.getElementById("cancel-edit-btn").classList.remove("hidden");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      showToast(`正在編輯「${ballot.name}」的票單，修改後請按「送出本委員投票單」儲存。`, "warning");
+    }
+
+    function cancelEdit() {
+      state.editingBallotId = null;
+      document.getElementById("editing-badge").classList.add("hidden");
+      document.getElementById("cancel-edit-btn").classList.add("hidden");
+      clearCurrentForm();
+      hideToast();
+    }
+
+    function deleteBallot(id) {
+      const ballot = state.ballots.find(b => b.id === id);
+      if (!ballot) return;
+      if (!confirm(`確定要刪除委員「${ballot.name}（${ballot.role}）」的投票紀錄嗎？`)) return;
+
+      state.ballots = state.ballots.filter(b => b.id !== id);
+      if (state.editingBallotId === id) cancelEdit();
+      saveToStorage();
+      renderAll();
+      showToast(`已刪除委員「${ballot.name}」的投票紀錄。`, "warning");
+    }
+
+    function resetAllBallots() {
+      if (state.ballots.length === 0) return;
+      if (!confirm("確定要清空目前所有已收集的委員投票紀錄嗎？此動作無法復原。")) return;
+      state.ballots = [];
+      cancelEdit();
+      saveToStorage();
+      renderAll();
+      showToast("已清空所有投票紀錄。", "warning");
+    }
+
+    // ==================== 統計計算與渲染 ====================
+    function computeStats() {
+      const totalVoters = state.ballots.length;
+
+      return state.cases.map((c, idx) => {
+        let originalCount = 0;
+        let committeeCount = 0;
+        const subCounts = {};
+        SUB_OPTIONS.forEach(opt => subCounts[opt] = 0);
+        const notes = [];
+
+        state.ballots.forEach(b => {
+          const v = b.votes[idx];
+          if (!v) return;
+          if (v.choiceType === "original") {
+            originalCount++;
+          } else if (v.choiceType === "committee") {
+            committeeCount++;
+            if (Array.isArray(v.subChoices)) {
+              v.subChoices.forEach(sub => {
+                if (subCounts[sub] !== undefined) subCounts[sub]++;
+              });
+            }
+            if (v.note) {
+              notes.push(`${b.name}：${v.note}`);
+            }
+          }
+        });
+
+        let decision = "尚未投票";
+        if (totalVoters > 0) {
+          if (originalCount > committeeCount) {
+            decision = c.suggestion;
+          } else if (committeeCount > originalCount) {
+            // 找出得票最高的具體處分
+            const topSubs = SUB_OPTIONS.filter(opt => subCounts[opt] > 0)
+              .sort((a, b) => subCounts[b] - subCounts[a]);
+            decision = topSubs.length > 0
+              ? `依獎懲會建議（${topSubs.map(s => `${s}:${subCounts[s]}票`).join("、")}）`
+              : "依獎懲會建議";
+          } else {
+            decision = "同票（待主席裁示）";
+          }
+        }
+
+        return {
+          caseInfo: c,
+          totalVoters,
+          originalCount,
+          committeeCount,
+          subCounts,
+          notes,
+          decision
+        };
+      });
+    }
+
+    function renderStats() {
+      const votersList = document.getElementById("voters-list");
+      if (state.ballots.length === 0) {
+        votersList.innerHTML = `<p class="text-sm text-slate-400">目前尚無委員送出票單。</p>`;
+      } else {
+        votersList.innerHTML = state.ballots.map((b, i) => `
+          <div class="inline-flex items-center gap-2 bg-slate-100 border border-slate-300 rounded-xl px-3 py-1.5 text-xs">
+            <span class="font-bold text-blue-900">#${i + 1} ${escapeHtml(b.name)}</span>
+            <span class="text-slate-600">(${escapeHtml(b.role)})</span>
+            <button onclick="editBallot('${b.id}')" class="text-blue-700 hover:underline font-semibold ml-1">修改</button>
+            <button onclick="deleteBallot('${b.id}')" class="text-red-600 hover:underline font-semibold">刪除</button>
+          </div>
+        `).join("");
+      }
+
+      const stats = computeStats();
+      const tbody = document.getElementById("stats-tbody");
+      tbody.innerHTML = stats.map(s => {
+        const c = s.caseInfo;
+        const pctOrig = s.totalVoters ? Math.round((s.originalCount / s.totalVoters) * 100) : 0;
+        const pctComm = s.totalVoters ? Math.round((s.committeeCount / s.totalVoters) * 100) : 0;
+
+        const subBadges = SUB_OPTIONS
+          .filter(opt => s.subCounts[opt] > 0)
+          .map(opt => `<span class="inline-block bg-indigo-100 text-indigo-900 font-semibold text-xs px-2 py-0.5 rounded mr-1 mb-1">${opt}: ${s.subCounts[opt]}</span>`)
+          .join("") || `<span class="text-slate-400 text-xs">—</span>`;
+
+        return `
+          <tr class="hover:bg-slate-50">
+            <td class="p-2.5 border border-slate-200 text-center font-bold">${escapeHtml(c.no)}</td>
+            <td class="p-2.5 border border-slate-200">${escapeHtml(c.cls)} ${escapeHtml(c.seat)}</td>
+            <td class="p-2.5 border border-slate-200 font-bold">${escapeHtml(c.name)}</td>
+            <td class="p-2.5 border border-slate-200 text-slate-700">${escapeHtml(c.suggestion)}</td>
+            <td class="p-2.5 border border-slate-200 text-center bg-blue-50/40 font-bold text-blue-900">
+              ${s.originalCount} 票 <span class="text-xs font-normal text-slate-500">(${pctOrig}%)</span>
+            </td>
+            <td class="p-2.5 border border-slate-200 text-center bg-indigo-50/40 font-bold text-indigo-900">
+              ${s.committeeCount} 票 <span class="text-xs font-normal text-slate-500">(${pctComm}%)</span>
+            </td>
+            <td class="p-2.5 border border-slate-200">${subBadges}</td>
+            <td class="p-2.5 border border-slate-200 text-xs text-slate-600">${s.notes.length ? escapeHtml(s.notes.join("；")) : "—"}</td>
+            <td class="p-2.5 border border-slate-200 text-center font-bold text-emerald-800 bg-emerald-50/40">${escapeHtml(s.decision)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    // ==================== 匯出統計 Excel ====================
+    function exportResultExcel() {
+      if (typeof XLSX === "undefined") {
+        showToast("Excel 匯出元件尚未載入，請稍後再試。", "error");
+        return;
+      }
+
+      const wb = XLSX.utils.book_new();
+      const stats = computeStats();
+
+      // 工作表 1：投票統計彙整
+      const summaryHeader = [
+        "編號", "班級", "座號", "姓名", "懲處事由", "獎懲條例", "條例內容", "原懲處建議",
+        "總投票人數", "同意原懲處建議(票)", "同意原懲處建議(%)",
+        "依獎懲會建議(票)", "依獎懲會建議(%)",
+        ...SUB_OPTIONS,
+        "其他建議彙整", "多數決議結果"
+      ];
+
+      const summaryRows = stats.map(s => {
+        const c = s.caseInfo;
+        const pctOrig = s.totalVoters ? Math.round((s.originalCount / s.totalVoters) * 100) + "%" : "0%";
+        const pctComm = s.totalVoters ? Math.round((s.committeeCount / s.totalVoters) * 100) + "%" : "0%";
+        return [
+          c.no, c.cls, c.seat, c.name, c.reason, c.rule, c.ruleContent, c.suggestion,
+          s.totalVoters, s.originalCount, pctOrig,
+          s.committeeCount, pctComm,
+          ...SUB_OPTIONS.map(opt => s.subCounts[opt]),
+          s.notes.join(" / "),
+          s.decision
+        ];
+      });
+
+      const wsSummary = XLSX.utils.aoa_to_sheet([
+        [`${state.meetingTitle} — 獎懲委員會投票統計彙整表`],
+        summaryHeader,
+        ...summaryRows
+      ]);
+      XLSX.utils.book_append_sheet(wb, wsSummary, "投票統計彙整");
+
+      // 工作表 2：各委員投票明細
+      const detailHeader = [
+        "編號", "班級", "座號", "姓名", "原懲處建議",
+        ...state.ballots.map(b => `${b.name}（${b.role}）`)
+      ];
+
+      const detailRows = state.cases.map((c, idx) => {
+        const voterCells = state.ballots.map(b => {
+          const v = b.votes[idx];
+          if (!v) return "未投票";
+          if (v.choiceType === "original") return c.suggestion;
+          const subs = v.subChoices && v.subChoices.length > 0 ? `（${v.subChoices.join("、")}）` : "";
+          const note = v.note ? `［備註：${v.note}］` : "";
+          return `依獎懲會建議${subs}${note}`;
+        });
+        return [c.no, c.cls, c.seat, c.name, c.suggestion, ...voterCells];
+      });
+
+      const wsDetail = XLSX.utils.aoa_to_sheet([
+        [`${state.meetingTitle} — 各委員投票明細表`],
+        detailHeader,
+        ...detailRows
+      ]);
+      XLSX.utils.book_append_sheet(wb, wsDetail, "各委員投票明細");
+
+      // 工作表 3：原始案件資料
+      const rawHeader = ["編號", "班級", "座號", "姓名", "懲處事由", "獎懲條例", "條例內容", "懲處建議"];
+      const rawRows = state.cases.map(c => [c.no, c.cls, c.seat, c.name, c.reason, c.rule, c.ruleContent, c.suggestion]);
+      const wsRaw = XLSX.utils.aoa_to_sheet([rawHeader, ...rawRows]);
+      XLSX.utils.book_append_sheet(wb, wsRaw, "原始案件資料");
+
+      const dateTag = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      XLSX.writeFile(wb, `${state.meetingTitle}_投票統計結果_${dateTag}.xlsx`);
+      showToast("✅ 已成功匯出統計 Excel 檔案！", "success");
+    }
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+  </script>
+</body>
+</html>
